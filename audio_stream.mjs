@@ -91,6 +91,7 @@ function startAudioStream(ws) {
     debug: false,
     exitOnSilence: 6,
     fileType: 'wav',
+    encoding: 'signed-integer', // Ensure encoding is consistent with playback
   });
 
   const micInputStream = micInstance.getAudioStream();
@@ -120,12 +121,13 @@ function playAudio(audioData, callback) {
     const audioBuffer = Buffer.from(audioData, 'base64');
     const speaker = new Speaker({
       channels: 1,
-      rate: 16000, // Adjust playback rate to match input rate
+      rate: 16000, // Match the recording rate
       bitDepth: 16,
     });
 
+    // Ensure buffer sizes are appropriate
     const readableStream = new Readable({
-      highWaterMark: 1024 * 16, // Reduced buffer size to potentially prevent underflow and improve memory efficiency
+      highWaterMark: 1024 * 32, // Increased buffer size to prevent underflow
       read() {
         this.push(audioBuffer);
         this.push(null);
