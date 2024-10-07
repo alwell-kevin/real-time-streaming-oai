@@ -35,6 +35,8 @@ const ws = new WebSocket(OPENAI_API_URL, {
   },
 });
 
+let accumulatedAudio = [];
+
 // Handle WebSocket connection events
 ws.on('open', () => {
   console.log('Connected to OpenAI Realtime API.');
@@ -51,11 +53,23 @@ ws.on('open', () => {
 ws.on('message', (message) => {
   const response = JSON.parse(message.toString());
   if (response.type === 'response.audio.delta') {
-    console.log('Received audio delta, preparing to play audio...');
-    // Delay playback slightly to avoid feedback loop with microphone
-    setTimeout(() => {
-      playAudio(response.delta);
-    }, 500); // Increase delay to help avoid feedback and ensure proper timing
+    console.log('Received audio delta, accumulating audio...');
+    accumulatedAudio.push(response.delta);
+  } else if (response.type === 'response.audio.done') {
+    console.log('Received complete audio response, preparing to play...');
+    const completeAudio = accumulatedAudio.join('');
+    playAudio(completeAudio, () => {
+      accumulatedAudio = []; // Clear accumulated audio after successful playback
+    });
+  } else if (response.type === 'response.content_part.added' && response.part?.type === 'audio') {
+    console.log('Received audio content part, accumulating audio...');
+    accumulatedAudio.push(response.part.transcript);
+  } else if (response.type === 'response.content_part.done') {
+    console.log('Received complete content part, preparing to play...');
+    const completeAudio = accumulatedAudio.join('');
+    playAudio(completeAudio, () => {
+      accumulatedAudio = []; // Clear accumulated audio after successful playback
+    });
   } else {
     console.log('Received message:', response);
   }
@@ -72,7 +86,7 @@ ws.on('error', (error) => {
 function startAudioStream(ws) {
   // Initialize mic and start capturing audio
   const micInstance = mic({
-    rate: '8000', // Lower rate to reduce playback speed and sync with OpenAI output
+    rate: '16000', // Increased rate to improve playback quality
     channels: '1',
     debug: false,
     exitOnSilence: 6,
@@ -88,27 +102,30 @@ function startAudioStream(ws) {
   console.log('Microphone started streaming.');
 
   micInputStream.on('data', (data) => {
-    // Send audio data to server in chunks
-    ws.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: data.toString('base64') }));
+    if (data.length > 0) {
+      // Send audio data to server in chunks
+      console.log('Sending audio data chunk to server...');
+      ws.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: data.toString('base64') }));
+    }
   });
 
   micInputStream.on('silence', () => {
-    // Commit the audio buffer when silence is detected
+    console.log('Committing audio buffer after silence...');
     ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
   });
 }
 
-function playAudio(audioData) {
+function playAudio(audioData, callback) {
   try {
     const audioBuffer = Buffer.from(audioData, 'base64');
     const speaker = new Speaker({
       channels: 1,
-      rate: 8000, // Match playback rate to microphone capture rate
+      rate: 16000, // Adjust playback rate to match input rate
       bitDepth: 16,
     });
 
     const readableStream = new Readable({
-      highWaterMark: 1024 * 64, // Further increase buffer size to prevent underflow
+      highWaterMark: 1024 * 16, // Reduced buffer size to potentially prevent underflow and improve memory efficiency
       read() {
         this.push(audioBuffer);
         this.push(null);
@@ -117,6 +134,10 @@ function playAudio(audioData) {
 
     readableStream.on('error', (error) => {
       console.error('Stream error during playback:', error);
+    });
+
+    readableStream.on('end', () => {
+      if (callback) callback();
     });
 
     readableStream.pipe(speaker);
