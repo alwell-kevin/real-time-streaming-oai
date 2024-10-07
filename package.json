@@ -1,0 +1,28 @@
+{
+  "name": "real-time-streaming-oai",
+  "version": "1.0.0",
+  "description": "working with https://platform.openai.com/docs/guides/realtime",
+  "main": "audio_stream.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alwell-kevin/real-time-streaming-oai.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/alwell-kevin/real-time-streaming-oai/issues"
+  },
+  "homepage": "https://github.com/alwell-kevin/real-time-streaming-oai#readme",
+  "dependencies": {
+    "axios": "^1.7.7",
+    "dotenv": "^16.4.5",
+    "mic": "^2.1.2",
+    "sox-audio": "^0.3.0",
+    "speaker": "^0.5.5",
+    "ws": "^8.18.0"
+  }
+}
