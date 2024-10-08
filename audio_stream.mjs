@@ -1,13 +1,11 @@
 // Ensure you have installed these dependencies before running the code:
 // npm install ws mic dotenv speaker
-
 import WebSocket from 'ws';
 import mic from 'mic';
 import { Readable } from 'stream';
 import Speaker from 'speaker';
 import dotenv from 'dotenv';
 import { execSync } from 'child_process';
-import { setTimeout } from 'timers';
 
 dotenv.config();
 
@@ -86,12 +84,12 @@ ws.on('error', (error) => {
 function startAudioStream(ws) {
   // Initialize mic and start capturing audio
   const micInstance = mic({
-    rate: '16000', // Increased rate to improve playback quality
+    rate: '24000', // Adjust this to match the Speaker configuration
     channels: '1',
     debug: false,
     exitOnSilence: 6,
     fileType: 'wav',
-    encoding: 'signed-integer', // Ensure encoding is consistent with playback
+    encoding: 'signed-integer',
   });
 
   const micInputStream = micInstance.getAudioStream();
@@ -121,13 +119,13 @@ function playAudio(audioData, callback) {
     const audioBuffer = Buffer.from(audioData, 'base64');
     const speaker = new Speaker({
       channels: 1,
-      rate: 16000, // Match the recording rate
+      sampleRate: 24000, // Adjust this to match the incoming audio format
       bitDepth: 16,
     });
 
     // Ensure buffer sizes are appropriate
     const readableStream = new Readable({
-      highWaterMark: 1024 * 32, // Increased buffer size to prevent underflow
+      highWaterMark: 1024 * 32, // Buffer size to prevent underflow
       read() {
         this.push(audioBuffer);
         this.push(null);
