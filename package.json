@@ -18,6 +18,7 @@
   },
   "homepage": "https://github.com/alwell-kevin/real-time-streaming-oai#readme",
   "dependencies": {
+    "@openai/realtime-api-beta": "github:openai/openai-realtime-api-beta",
     "axios": "^1.7.7",
     "dotenv": "^16.4.5",
     "mic": "^2.1.2",

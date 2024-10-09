@@ -1,15 +1,11 @@
-// Ensure you have installed these dependencies before running the code:
-// npm install ws mic dotenv speaker
-import WebSocket from 'ws';
+import { RealtimeClient } from '@openai/realtime-api-beta';
 import mic from 'mic';
 import { Readable } from 'stream';
 import Speaker from 'speaker';
 import dotenv from 'dotenv';
-import { execSync } from 'child_process';
 
 dotenv.config();
 
-const OPENAI_API_URL = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01";
 const API_KEY = process.env.OPENAI_API_KEY;
 
 if (!API_KEY) {
@@ -17,135 +13,129 @@ if (!API_KEY) {
   process.exit(1);
 }
 
-// Check if 'sox' is installed and available
-try {
-  execSync('which rec');
-} catch (error) {
-  console.error("Error: 'rec' command not found. Please install 'sox' using 'brew install sox'.");
-  process.exit(1);
+const client = new RealtimeClient({
+  apiKey: API_KEY,
+  model: 'gpt-4o-realtime-preview-2024-10-01',
+});
+
+let micInstance;
+let speaker;
+
+async function main() {
+  try {
+    console.log('Attempting to connect...');
+    await client.connect();
+    startAudioStream();
+    console.log('Connection established successfully.');
+  } catch (error) {
+    console.error('Error connecting to OpenAI Realtime API:', error);
+    console.log('Connection attempt failed. Retrying in 5 seconds...');
+    setTimeout(main, 5000);
+  }
 }
 
-// Establish the WebSocket connection to OpenAI
-const ws = new WebSocket(OPENAI_API_URL, {
-  headers: {
-    Authorization: `Bearer ${API_KEY}`,
-    'OpenAI-Beta': 'realtime=v1',
-  },
-});
+main();
 
-let accumulatedAudio = [];
 
-// Handle WebSocket connection events
-ws.on('open', () => {
-  console.log('Connected to OpenAI Realtime API.');
-  ws.send(JSON.stringify({
-    type: 'response.create',
-    response: {
-      modalities: ['text', 'audio'],
-      instructions: 'Please assist the user.',
-    },
-  }));
-  startAudioStream(ws);
-});
-
-ws.on('message', (message) => {
-  const response = JSON.parse(message.toString());
-  if (response.type === 'response.audio.delta') {
-    console.log('Received audio delta, accumulating audio...');
-    accumulatedAudio.push(response.delta);
-  } else if (response.type === 'response.audio.done') {
-    console.log('Received complete audio response, preparing to play...');
-    const completeAudio = accumulatedAudio.join('');
-    playAudio(completeAudio, () => {
-      accumulatedAudio = []; // Clear accumulated audio after successful playback
-    });
-  } else if (response.type === 'response.content_part.added' && response.part?.type === 'audio') {
-    console.log('Received audio content part, accumulating audio...');
-    accumulatedAudio.push(response.part.transcript);
-  } else if (response.type === 'response.content_part.done') {
-    console.log('Received complete content part, preparing to play...');
-    const completeAudio = accumulatedAudio.join('');
-    playAudio(completeAudio, () => {
-      accumulatedAudio = []; // Clear accumulated audio after successful playback
-    });
+client.on('conversation.item.completed', ({ item }) => {
+  console.log('Conversation item completed:', item);
+  
+  if (item.type === 'message' && item.role === 'assistant' && item.formatted && item.formatted.audio) {
+    console.log('Playing audio response...');
+    playAudio(item.formatted.audio);
   } else {
-    console.log('Received message:', response);
+    console.log('No audio content in this item.');
   }
 });
 
-ws.on('close', () => {
-  console.log('WebSocket connection closed.');
-});
+// BEGIN MANAGE Mac AUDIO INTERFACES
 
-ws.on('error', (error) => {
-  console.error('WebSocket error:', error);
-});
-
-function startAudioStream(ws) {
-  // Initialize mic and start capturing audio
-  const micInstance = mic({
-    rate: '24000', // Adjust this to match the Speaker configuration
-    channels: '1',
-    debug: false,
-    exitOnSilence: 6,
-    fileType: 'wav',
-    encoding: 'signed-integer',
-  });
-
-  const micInputStream = micInstance.getAudioStream();
-  micInputStream.on('error', (error) => {
-    console.error('Microphone error:', error);
-  });
-
-  micInstance.start();
-  console.log('Microphone started streaming.');
-
-  micInputStream.on('data', (data) => {
-    if (data.length > 0) {
-      // Send audio data to server in chunks
-      console.log('Sending audio data chunk to server...');
-      ws.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: data.toString('base64') }));
-    }
-  });
-
-  micInputStream.on('silence', () => {
-    console.log('Committing audio buffer after silence...');
-    ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
-  });
-}
-
-function playAudio(audioData, callback) {
+function startAudioStream() {
   try {
-    const audioBuffer = Buffer.from(audioData, 'base64');
-    const speaker = new Speaker({
-      channels: 1,
-      sampleRate: 24000, // Adjust this to match the incoming audio format
-      bitDepth: 16,
+    micInstance = mic({
+      rate: '24000',
+      channels: '1',
+      debug: false,
+      exitOnSilence: 6,
+      fileType: 'raw',
+      encoding: 'signed-integer',
     });
 
-    // Ensure buffer sizes are appropriate
+    const micInputStream = micInstance.getAudioStream();
+
+    micInputStream.on('error', (error) => {
+      console.error('Microphone error:', error);
+    });
+
+    micInstance.start();
+    console.log('Microphone started streaming.');
+
+    let audioBuffer = Buffer.alloc(0);
+    const chunkSize = 4800; // 0.2 seconds of audio at 24kHz
+
+    micInputStream.on('data', (data) => {
+      audioBuffer = Buffer.concat([audioBuffer, data]);
+
+      while (audioBuffer.length >= chunkSize) {
+        const chunk = audioBuffer.slice(0, chunkSize);
+        audioBuffer = audioBuffer.slice(chunkSize);
+
+        const int16Array = new Int16Array(chunk.buffer, chunk.byteOffset, chunk.length / 2);
+
+        try {
+          client.appendInputAudio(int16Array);
+        } catch (error) {
+          console.error('Error sending audio data:', error);
+        }
+      }
+    });
+
+    micInputStream.on('silence', () => {
+      console.log('Silence detected, creating response...');
+      try {
+        client.createResponse();
+      } catch (error) {
+        console.error('Error creating response:', error);
+      }
+    });
+  } catch (error) {
+    console.error('Error starting audio stream:', error);
+  }
+}
+
+function playAudio(audioData) {
+  try {
+    if (!speaker) {
+      speaker = new Speaker({
+        channels: 1,
+        bitDepth: 16,
+        sampleRate: 24000,
+      });
+    }
+
+    // Convert Int16Array to Buffer
+    const buffer = Buffer.from(audioData.buffer);
+
+    // Create a readable stream from the buffer
     const readableStream = new Readable({
-      highWaterMark: 1024 * 32, // Buffer size to prevent underflow
       read() {
-        this.push(audioBuffer);
+        this.push(buffer);
         this.push(null);
       },
     });
 
-    readableStream.on('error', (error) => {
-      console.error('Stream error during playback:', error);
-    });
-
-    readableStream.on('end', () => {
-      if (callback) callback();
-    });
-
+    // Pipe the stream to the speaker
     readableStream.pipe(speaker);
-    console.log('Audio played from received stream.');
+    console.log('Audio sent to speaker for playback. Buffer length:', buffer.length);
+
+    // Handle the 'close' event to recreate the speaker for the next playback
+    speaker.on('close', () => {
+      console.log('Speaker closed. Recreating for next playback.');
+      speaker = null;
+    });
   } catch (error) {
     console.error('Error playing audio:', error);
   }
 }
 
-// Fix for ENOENT 'rec' command not found error
-process.env.PATH = `${process.env.PATH}:/usr/local/bin`; // Add common location for 'rec' command
+// END MANAGE AUDIO INTERFACES
