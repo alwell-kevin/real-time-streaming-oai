@@ -35,20 +35,22 @@ const ws = new WebSocket(OPENAI_API_URL, {
 
 let accumulatedAudio = [];
 
-// Handle WebSocket connection events
-ws.on('open', () => {
-  console.log('Connected to OpenAI Realtime API.');
-  ws.send(JSON.stringify({
-    type: 'response.create',
-    response: {
-      modalities: ['text', 'audio'],
-      instructions: 'Please assist the user.',
-    },
-  }));
-  startAudioStream(ws);
-});
+// Add this function after the existing imports
+async function getWeather(location, unit) {
+  // This is a mock implementation. In a real scenario, you'd call a weather API.
+  console.log(`Getting weather for ${location} in ${unit}`);
+  // Simulating an API call delay
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  return {
+    location,
+    temperature: unit === 'celsius' ? 22 : 72,
+    unit,
+    condition: 'Sunny'
+  };
+}
 
-ws.on('message', (message) => {
+// Modify the ws.on('message', ...) handler
+ws.on('message', async (message) => {
   const response = JSON.parse(message.toString());
   if (response.type === 'response.audio.delta') {
     console.log('Received audio delta, accumulating audio...');
@@ -68,9 +70,58 @@ ws.on('message', (message) => {
     playAudio(completeAudio, () => {
       accumulatedAudio = []; // Clear accumulated audio after successful playback
     });
+  } else if (response.type === 'function_call' && response.function.name === 'get_current_weather') {
+    console.log('Received function call for get_current_weather');
+    const { location, unit } = response.function.arguments;
+    const weatherData = await getWeather(location, unit);
+    console.log('Weather data:', weatherData);
+    
+    // Send the weather data back to OpenAI
+    ws.send(JSON.stringify({
+      type: 'function_call.result',
+      id: response.id,
+      result: weatherData
+    }));
   } else {
     console.log('Received message:', response);
   }
+});
+
+ws.on('open', () => {
+  console.log('Connected to OpenAI Realtime API.');
+  ws.send(JSON.stringify({
+    type: 'conversation.item.create',
+    item: {
+      type: 'message',
+      role: 'system',
+      content: 'Please assist the user with getting their local weather forecast.',
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "get_current_weather",
+            description: "Get the current weather for a location",
+            parameters: {
+              type: "object",
+              properties: {
+                location: {
+                  type: "string",
+                  description: "The city and country, e.g., San Francisco, USA"
+                },
+                unit: {
+                  type: "string",
+                  enum: ["celsius", "fahrenheit"],
+                  description: "The unit of temperature to use"
+                }
+              },
+              required: ["location", "unit"]
+            }
+          }
+        }
+      ]
+    },
+  }));
+  startAudioStream(ws);
 });
 
 ws.on('close', () => {
